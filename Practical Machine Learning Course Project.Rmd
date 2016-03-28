@@ -1,0 +1,103 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Yuyi Cheng"
+date: "March 27, 2016"
+output: 
+  html_document:
+    keep_md: true
+---
+
+
+## Introduction
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, our goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. 
+
+
+## Data Processing
+First, we need to load the relevant packages and to set up the global settings:
+```{r setoptions, echo=TRUE, message=FALSE}
+library(knitr)
+library(ggplot2)
+library(lattice)
+library(caret)
+library(randomForest)
+set.seed(0213)
+opts_chunk$set(echo = TRUE, cache= TRUE)
+```
+
+Then, we can download the data files and load the data into R:
+```{r}
+if (!file.exists("pml-training.csv")){
+        download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", "pml-training.csv")
+}
+pml_training <- read.csv("pml-training.csv")
+
+if (!file.exists("pml-testing.csv")){
+        download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", "pml-testing.csv")
+}
+pml_testing <- read.csv("pml-testing.csv")
+
+dim1<- dim(pml_training)
+dim2<- dim(pml_testing)
+
+```
+
+Now we can see the training dataset has `r dim1[1]` observations of `r dim1[2]` variables, and the testing dataset has `r dim2[1]` observations of `r dim2[2]` variables. 
+
+The distribution of the five different activities in the training dataset is:
+```{r}
+table(pml_training$classe)
+```
+
+Now we'd like to reduce the noise of the training dataset since it has too many unusable variables. 
+
+```{r}
+pml_training <- pml_training[,-nearZeroVar(pml_training)]
+pml_training <- pml_training[,-c(1:7)]
+na_count <-data.frame(sapply(pml_training, function(x) sum(is.na(x))))
+pml_training <- pml_training[,na_count<dim1[1]*0.6]
+testing <- pml_testing[,colnames(pml_testing)%in%colnames(pml_training)]
+dim3 <- dim(pml_training)
+table(pml_training$classe)
+```
+After removing unusable columns (very few unique values; user_name and time stamps; over 60% missing values), the dataset has `r dim3[2]` variables.  
+
+## Training the Model
+To start the modeling, we will need to partition the data for training and testing the models. We will use the 70% of the training dataset for training the model and 30% to test the model for accuracy estimate. And the original testing dataset from “pml-testing.csv” will be used to predict.
+
+```{r}
+inTrain <- createDataPartition(y=pml_training$classe, p=0.7, list=FALSE)
+training <- pml_training[inTrain,]
+validating <- pml_training[-inTrain,]
+```
+
+Now we have two datasets: training and validating. We can conduct random forrest algorithm to initiate the model to predict the activity category (classe variable in the dataset). Since we still have 52 predictors in our dataset, here we can use pca method to continue the data reducation, and then use pca data to construct the random forrest model. 
+
+```{r}
+pp <- preProcess(training[,-52], method = 'pca')
+training_pca <- predict(pp, training[,-52])
+validating_pca <- predict(pp, validating[,-52])
+bestmtry <- tuneRF(training_pca,training$classe, ntreeTry=100, stepFactor=1.5,improve=0.01, trace=TRUE, plot=TRUE, dobest=FALSE)
+mtry <- bestmtry[as.numeric(which.min(bestmtry[,"OOBError"])),"mtry"]
+modelFit <- train(training$classe ~ ., method="rf", data=training_pca, ntree = 100, tuneGrid=data.frame(.mtry = mtry))
+modelFit$finalModel
+```
+
+## Validating the Model
+
+Now we can evaluate our model with the validating dataset. 
+```{r}
+modelPredict <- predict(modelFit, validating_pca)
+confusionMatrix(validating$classe,modelPredict)
+```
+
+## Testing the Model
+
+With a model with 97% accuracy, we can now apply it to the given testing dataset to generate the final results:
+
+```{r}
+testing_pca <- predict(pp, testing)
+testPredict <- predict(modelFit, testing_pca)
+testPredict
+```
+
+
